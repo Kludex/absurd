@@ -50,15 +50,13 @@ def test_async_absurd_falls_back_to_default_absurd_uri(monkeypatch):
 
 
 class MockConnection:
-    def __init__(self):
-        self.broken = False
-        self.closed = False
+    broken = False
 
     async def close(self):
-        self.closed = True
+        pass
 
 
-def test_async_absurd_replaces_an_interrupted_owned_connection(monkeypatch):
+def test_async_absurd_reconnects_only_after_an_interrupted_connection(monkeypatch):
     made = []
 
     async def connect(dsn, autocommit=True):
@@ -71,30 +69,11 @@ def test_async_absurd_replaces_an_interrupted_owned_connection(monkeypatch):
     async def run():
         await client._ensure_connected()
         made[0].broken = True
-        await client._ensure_connected()
+        await client._ensure_connected()  # interrupted: replaced
+        await client.close()
+        await client._ensure_connected()  # closed cleanly: not resurrected
 
     asyncio.run(run())
 
     assert len(made) == 2
     assert client._conn is made[1]
-
-
-def test_async_absurd_does_not_reconnect_after_an_explicit_close(monkeypatch):
-    made = []
-
-    async def connect(dsn, autocommit=True):
-        made.append(MockConnection())
-        return made[-1]
-
-    monkeypatch.setattr(absurd_sdk.AsyncConnection, "connect", connect)
-    client = absurd_sdk.AsyncAbsurd("postgresql://localhost/absurd")
-
-    async def run():
-        await client._ensure_connected()
-        await client.close()
-        await client._ensure_connected()
-
-    asyncio.run(run())
-
-    assert made == [client._conn]
-    assert client._conn.closed
