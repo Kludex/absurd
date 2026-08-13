@@ -1,7 +1,6 @@
 import asyncio
 
 import psycopg
-from psycopg import pq
 
 import absurd_sdk
 
@@ -59,7 +58,7 @@ def test_async_absurd_reconnects_after_an_interrupted_connection(monkeypatch):
         # Connecting to a nonexistent socket fails immediately, producing a
         # real psycopg connection that is `broken`: status BAD without a
         # clean close(), the same state a dropped connection leaves behind.
-        made.append(psycopg.AsyncConnection(pq.PGconn.connect(b"host=/nonexistent")))
+        made.append(psycopg.AsyncConnection(psycopg.pq.PGconn.connect(b"host=/nonexistent")))
         return made[-1]
 
     monkeypatch.setattr(absurd_sdk.AsyncConnection, "connect", connect)
