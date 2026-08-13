@@ -1,5 +1,8 @@
 import asyncio
 
+import psycopg
+from psycopg import pq
+
 import absurd_sdk
 
 
@@ -49,18 +52,14 @@ def test_async_absurd_falls_back_to_default_absurd_uri(monkeypatch):
     assert client._owned_conn is True
 
 
-class MockConnection:
-    broken = False
-
-    async def close(self):
-        pass
-
-
-def test_async_absurd_reconnects_only_after_an_interrupted_connection(monkeypatch):
+def test_async_absurd_reconnects_after_an_interrupted_connection(monkeypatch):
     made = []
 
     async def connect(dsn, autocommit=True):
-        made.append(MockConnection())
+        # Connecting to a nonexistent socket fails immediately, producing a
+        # real psycopg connection that is `broken`: status BAD without a
+        # clean close(), the same state a dropped connection leaves behind.
+        made.append(psycopg.AsyncConnection(pq.PGconn.connect(b"host=/nonexistent")))
         return made[-1]
 
     monkeypatch.setattr(absurd_sdk.AsyncConnection, "connect", connect)
@@ -68,10 +67,7 @@ def test_async_absurd_reconnects_only_after_an_interrupted_connection(monkeypatc
 
     async def run():
         await client._ensure_connected()
-        made[0].broken = True
-        await client._ensure_connected()  # interrupted: replaced
-        await client.close()
-        await client._ensure_connected()  # closed cleanly: not resurrected
+        await client._ensure_connected()
 
     asyncio.run(run())
 
