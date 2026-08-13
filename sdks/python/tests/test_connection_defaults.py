@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 import absurd_sdk
 
 
@@ -49,7 +51,7 @@ def test_async_absurd_falls_back_to_default_absurd_uri(monkeypatch):
     assert client._owned_conn is True
 
 
-class _FakeAsyncConnection:
+class MockConnection:
     def __init__(self):
         self.broken = False
         self.closed = False
@@ -58,64 +60,61 @@ class _FakeAsyncConnection:
         self.closed = True
 
 
-def test_async_absurd_reuses_a_healthy_owned_connection(monkeypatch):
-    connections = []
+@pytest.fixture
+def connections(monkeypatch):
+    """The connections handed out by a patched `AsyncConnection.connect`, in order."""
+    made = []
 
-    async def fake_connect(dsn, autocommit=True):
-        connection = _FakeAsyncConnection()
-        connections.append(connection)
-        return connection
+    async def connect(dsn, autocommit=True):
+        made.append(MockConnection())
+        return made[-1]
 
-    monkeypatch.setattr(absurd_sdk.AsyncConnection, "connect", fake_connect)
+    monkeypatch.setattr(absurd_sdk.AsyncConnection, "connect", connect)
+    return made
+
+
+def test_async_absurd_reuses_a_healthy_owned_connection(connections):
     client = absurd_sdk.AsyncAbsurd("postgresql://localhost/absurd")
 
-    asyncio.run(client._ensure_connected())
-    asyncio.run(client._ensure_connected())
+    async def run():
+        await client._ensure_connected()
+        await client._ensure_connected()
 
-    assert len(connections) == 1
-    assert client._conn is connections[0]
+    asyncio.run(run())
+
+    assert connections == [client._conn]
 
 
-def test_async_absurd_replaces_an_interrupted_owned_connection(monkeypatch):
-    connections = []
-
-    async def fake_connect(dsn, autocommit=True):
-        connection = _FakeAsyncConnection()
-        connections.append(connection)
-        return connection
-
-    monkeypatch.setattr(absurd_sdk.AsyncConnection, "connect", fake_connect)
+def test_async_absurd_replaces_an_interrupted_owned_connection(connections):
     client = absurd_sdk.AsyncAbsurd("postgresql://localhost/absurd")
 
-    asyncio.run(client._ensure_connected())
-    connections[0].broken = True
-    asyncio.run(client._ensure_connected())
+    async def run():
+        await client._ensure_connected()
+        connections[0].broken = True
+        await client._ensure_connected()
+
+    asyncio.run(run())
 
     assert len(connections) == 2
     assert client._conn is connections[1]
 
 
-def test_async_absurd_does_not_reconnect_after_an_explicit_close(monkeypatch):
-    connections = []
-
-    async def fake_connect(dsn, autocommit=True):
-        connection = _FakeAsyncConnection()
-        connections.append(connection)
-        return connection
-
-    monkeypatch.setattr(absurd_sdk.AsyncConnection, "connect", fake_connect)
+def test_async_absurd_does_not_reconnect_after_an_explicit_close(connections):
     client = absurd_sdk.AsyncAbsurd("postgresql://localhost/absurd")
 
-    asyncio.run(client._ensure_connected())
-    asyncio.run(client.close())
-    asyncio.run(client._ensure_connected())
+    async def run():
+        await client._ensure_connected()
+        await client.close()
+        await client._ensure_connected()
 
-    assert len(connections) == 1
-    assert client._conn is connections[0]
+    asyncio.run(run())
+
+    assert connections == [client._conn]
+    assert client._conn.closed
 
 
 def test_async_absurd_does_not_replace_an_injected_broken_connection():
-    connection = _FakeAsyncConnection()
+    connection = MockConnection()
     connection.broken = True
     client = absurd_sdk.AsyncAbsurd(connection)
 
